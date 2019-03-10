@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics.Contracts;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices.WindowsRuntime;
@@ -19,24 +20,21 @@ namespace Davinci.net
 {
     public partial class DavinciImage : IDisposable
     {
-        private readonly Stack<IImageProvider> _sourceHistory;
+        private readonly Stack<DavinciImage> _sourceHistory;
         private IImageProvider _source;
-        private IImageProvider Source
-        {
-            get => _source;
-            set
-            {
-                _sourceHistory.Push(Source);
-                _source = value;
-            }
-        }
+        
         
         private DavinciImage(IImageProvider source)
         {
-            _sourceHistory=new Stack<IImageProvider>();
-            Source = source;
+            _sourceHistory=new Stack<DavinciImage>();
+            _source = source;
         }
-
+        private DavinciImage(IImageProvider source, DavinciImage parent)
+        {
+            _sourceHistory = parent._sourceHistory;
+            _sourceHistory.Push(parent);
+            _source = source;
+        }
         private readonly Action _disposeAction;
 
         public DavinciImage(StorageFile file,  bool delete) : this(new StorageFileImageSource(file))
@@ -56,47 +54,46 @@ namespace Davinci.net
         {}
         public DavinciImage Contast(double level)
         {
-            Source = new ContrastEffect(Source) {Level = level};
-            return this;
+            var source =new DavinciImage(new ContrastEffect(this._source) {Level = level});
+            return source;
         }
 
         public DavinciImage Sharpness(double level)
         {
-            Source = new SharpnessEffect(Source) {Level = level};
-            return this;
+            var source = new DavinciImage(new SharpnessEffect(this._source) { Level = level },this);
+            return source;
+            
         }
 
         public DavinciImage SaturationLightness(Curve lightnessCurve, Curve saturationCurve)
         {
-            Source = new SaturationLightnessEffect(Source)
+            return new DavinciImage(new SaturationLightnessEffect(_source)
             {
                 LightnessCurve = lightnessCurve,
                 SaturationCurve = saturationCurve
-            };
-            return this;
+            },this);
         }
 
         public DavinciImage TemperatureAndTint(double temperature, double tint)
         {
-            Source = new TemperatureAndTintEffect(Source) {Temperature = temperature, Tint = tint};
-            return this;
+            return new DavinciImage(new TemperatureAndTintEffect(_source) {Temperature = temperature, Tint = tint},this);
         }
 
         public DavinciImage Scale(double scale)
         {
-            Source = new ScaleEffect(Source) {Scale = scale };
-            return this;
+            return new DavinciImage(new ScaleEffect(_source) { Scale = scale },this);
+
+            
         }
 
         public DavinciImage Crop(Rect area)
         {
-            Source = new CropEffect(Source) {CropArea = area};
-            return this;
+            return new DavinciImage(new CropEffect(_source) {CropArea = area},this);
         }
 
         public async Task<BitmapImage> ToImageAsync()
         {
-            using (var jpegRenderer = new JpegRenderer(Source))
+            using (var jpegRenderer = new JpegRenderer(_source))
             {
                 var biSource = new BitmapImage();
                 var pixels= await jpegRenderer.RenderAsync();
@@ -107,7 +104,7 @@ namespace Davinci.net
         }
         public async Task<Stream> ToStreamAsync()
         {
-            using (var jpegRenderer = new JpegRenderer(Source))
+            using (var jpegRenderer = new JpegRenderer(_source))
             {
                 var biSource = new BitmapImage();
                 var pixels = await jpegRenderer.RenderAsync();
@@ -117,7 +114,7 @@ namespace Davinci.net
         }
         public async Task<IBuffer> ToBufferAsync()
         {
-            using (var jpegRenderer = new JpegRenderer(Source))
+            using (var jpegRenderer = new JpegRenderer(_source))
             {
                 var pixels = await jpegRenderer.RenderAsync();
                 return pixels;
@@ -129,23 +126,16 @@ namespace Davinci.net
             var listResults = new List<Tuple<Point, DavinciImage>>();
 
             Size size;
-            if (Source is ScaleEffect)
-            {
-                var imageProviderInfo = await _sourceHistory.Peek().GetInfoAsync();
-                size = new Size(imageProviderInfo.ImageSize.Width * (Source as ScaleEffect).Scale,
-                    imageProviderInfo.ImageSize.Height * (Source as ScaleEffect).Scale);
-            }
-            else
-                size = (await Source.GetInfoAsync()).ImageSize;
-            var numberOfHorizontalTiles = (int) size.Width / tileWidth;
-            var numberOfVerticalTiles = (int) size.Height / tileHight;
+            size = await GetSize(_source);
+            var numberOfHorizontalTiles = (int)size.Width / tileWidth;
+            var numberOfVerticalTiles = (int)size.Height / tileHight;
 
             for (var y = 0; y < numberOfVerticalTiles; y++)
             {
                 for (var x = 0; x < numberOfHorizontalTiles; x++)
 
                 {
-                    var cropEffect = new CropEffect(Source)
+                    var cropEffect = new CropEffect(_source)
                     {
                         CropArea = new Rect(x * tileWidth, y * tileHight, tileWidth, tileHight)
                     };
@@ -156,6 +146,20 @@ namespace Davinci.net
 
             return listResults;
         }
+        [Pure]
+        private async Task<Size> GetSize(IImageProvider source)
+        {
+            if (source is ScaleEffect)
+            {
+               
+                    var imageProviderInfo = await GetSize((source as ScaleEffect).Source);
+                    return new Size(imageProviderInfo.Width * (source as ScaleEffect).Scale,
+                        imageProviderInfo.Height * (source as ScaleEffect).Scale);
+                
+            }
+            else
+                return (await source.GetInfoAsync()).ImageSize;
+        }
 
         public void Dispose()
         {
@@ -163,7 +167,6 @@ namespace Davinci.net
             {
                 (_sourceHistory.Pop() as IDisposable)?.Dispose();
             }
-            _disposeAction?.Invoke();
         }
     }
 }
