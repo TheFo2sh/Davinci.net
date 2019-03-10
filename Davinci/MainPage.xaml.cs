@@ -43,7 +43,7 @@ namespace Davinci
                 (new Point(2, 1), imageStorageFile2));
 
             GridView.ItemsSource = await
-                (await davinci.ToTilesAsync(256, 256))
+                (await davinci.Scale(2).ToTilesAsync(256, 256))
                 .Select(x => x.Item2.Scale(0.5).ToImageAsync())
                 .ExecuteAsync();
 

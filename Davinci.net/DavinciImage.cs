@@ -127,7 +127,16 @@ namespace Davinci.net
         public async Task<IEnumerable<Tuple<Point, DavinciImage>>> ToTilesAsync(double tileWidth, double tileHight)
         {
             var listResults = new List<Tuple<Point, DavinciImage>>();
-            var size = (await Source.GetInfoAsync()).ImageSize;
+
+            Size size;
+            if (Source is ScaleEffect)
+            {
+                var imageProviderInfo = await _sourceHistory.Peek().GetInfoAsync();
+                size = new Size(imageProviderInfo.ImageSize.Width * (Source as ScaleEffect).Scale,
+                    imageProviderInfo.ImageSize.Height * (Source as ScaleEffect).Scale);
+            }
+            else
+                size = (await Source.GetInfoAsync()).ImageSize;
             var numberOfHorizontalTiles = (int) size.Width / tileWidth;
             var numberOfVerticalTiles = (int) size.Height / tileHight;
 
