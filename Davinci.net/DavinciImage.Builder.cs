@@ -2,12 +2,19 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices.WindowsRuntime;
 using System.Text;
 using System.Threading.Tasks;
 using Windows.Foundation;
+using Windows.Graphics.Display;
+using Windows.Graphics.Imaging;
 using Windows.Storage;
+using Windows.Storage.Streams;
 using Windows.UI;
+using Windows.UI.Xaml.Controls;
+using Windows.UI.Xaml.Media.Imaging;
 using Microsoft.Graphics.Canvas;
+using Microsoft.Graphics.Canvas.UI.Xaml;
 
 namespace Davinci.net
 {
@@ -20,21 +27,20 @@ namespace Davinci.net
         }
         public static async Task<DavinciImage> FromTilesAsync( float width=0,float height=0, params (Point, StorageFile imageStorageFile)[] imageFiles)
         {
-            var device = CanvasDevice.GetSharedDevice();
+            var device = new CanvasVirtualControl();
 
             var canvasBitmaps = await Task.WhenAll(imageFiles.Select(async file =>
                new Tuple<Point, CanvasBitmap>(file.Item1,await CanvasBitmap.LoadAsync(device, await file.Item2.OpenReadAsync()))));
 
             if (width == 0)
-                width = (float)(canvasBitmaps.Sum(f => f.Item2.Size.Width));
+                width = (float)(canvasBitmaps.GroupBy(f=>f.Item1.X).Select(g=>g.Sum(f=>f.Item2.Size.Width)).Max());
             if (height == 0)
-                height = (float)(canvasBitmaps.Sum(f => f.Item2.Size.Height));
+                height = (float)(canvasBitmaps.GroupBy(f => f.Item1.Y).Select(g => g.Sum(f => f.Item2.Size.Height)).Max());
 
-            var offscreen = new CanvasRenderTarget(device, width,height, 96);
+            var offscreen = new CanvasVirtualImageSource(device, width,height);
 
-            using (var ds = offscreen.CreateDrawingSession())
+            using (var ds = offscreen.CreateDrawingSession(Colors.White,new Rect(0,0,width,height)))
             {
-                ds.Clear(Colors.White);
                 var previous = new List<Tuple<Point, CanvasBitmap>>();
                 foreach (var item in canvasBitmaps)
                 {
@@ -48,18 +54,30 @@ namespace Davinci.net
             }
 
             StorageFile resultFile;
-            using (var stream = new MemoryStream())
+            using (var stream = new InMemoryRandomAccessStream())
             {
-                await offscreen.SaveAsync(stream.AsRandomAccessStream(), CanvasBitmapFileFormat.Png);
-                stream.Seek(0, SeekOrigin.Begin);
+                var image = new Image {Source = offscreen.Source};
+                var bmp = new RenderTargetBitmap();
+                await bmp.RenderAsync(image);
+                var displayInformation = DisplayInformation.GetForCurrentView();
+                var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, stream);
+                encoder.SetPixelData(BitmapPixelFormat.Bgra8, // RGB with alpha
+                    BitmapAlphaMode.Premultiplied,
+                    (uint)bmp.PixelWidth,
+                    (uint)bmp.PixelHeight,
+                    displayInformation.RawDpiX,
+                    displayInformation.RawDpiY,
+                    (await bmp.GetPixelsAsync()).ToArray());
+                await encoder.FlushAsync();
+                stream.Seek(0);
+
                 resultFile = await ApplicationData.Current.LocalFolder.CreateFileAsync(Guid.NewGuid() + ".png");
-                using (var sw = await resultFile.OpenStreamForWriteAsync())
+                using (var sw = await resultFile.OpenReadAsync())
                 {
-                    await stream.CopyToAsync(sw);
-                    await sw.FlushAsync();
+                    await RandomAccessStream.CopyAndCloseAsync(stream.GetInputStreamAt(0), sw.GetOutputStreamAt(0));
                 }
             }
-
+            device.di
             return new DavinciImage( resultFile,true);
         }
 

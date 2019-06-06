@@ -81,7 +81,16 @@ namespace Davinci.net
 
         public DavinciImage Scale(double scale)
         {
-            return new DavinciImage(new ScaleEffect(_source) { Scale = scale },this);
+            try
+            {
+                if (scale == 0)
+                    return new DavinciImage(_source, this);
+                return new DavinciImage(new ScaleEffect(_source) { Scale = scale },this);
+            }
+            catch (Exception e)
+            {
+                throw;
+            }
 
             
         }
@@ -102,6 +111,55 @@ namespace Davinci.net
                 return biSource;
             }
         }
+        public async Task<WriteableBitmap> ToWritableBitmapAsync()
+        {
+            using (var jpegRenderer = new  JpegRenderer(_source))
+            {
+                var size = await GetSize(_source);
+                var biSource = new WriteableBitmap((int)Math.Ceiling(size.Width), (int)Math.Ceiling(size.Height));
+                var pixels = await jpegRenderer.RenderAsync();
+                
+                await biSource.SetSourceAsync(pixels.AsStream().AsRandomAccessStream());
+                return biSource;
+            }
+        }
+
+        public async Task<StorageFile> ToStorageFileAsync(StorageFile file)
+        {
+            using (var jpegRenderer = new JpegRenderer(_source))
+            {
+                var size = await GetSize(_source);
+                var pixels = await jpegRenderer.RenderAsync();
+                using (var stream = await file.OpenAsync(FileAccessMode.ReadWrite))
+                {
+                    await stream.WriteAsync(pixels);
+                }
+                return file;
+            }
+
+            //var biSource = await ToWritableBitmapAsync();
+            //using (var stream = await file.OpenStreamForWriteAsync())
+            //{
+            //    await biSource.ToStreamAsJpeg(stream.AsRandomAccessStream());
+            //    stream.Flush();
+            //}
+
+            //return file;
+        }
+
+        public async Task<StorageFile> ToStorageFileAsync(StorageFolder folder, string fileName)
+        {
+            try
+            {
+                var file = await folder.CreateFileAsync(fileName, CreationCollisionOption.GenerateUniqueName);
+                return await ToStorageFileAsync(file);
+            }
+            catch (Exception ex)
+            {
+                throw;
+            }
+        }
+
         public async Task<Stream> ToStreamAsync()
         {
             using (var jpegRenderer = new JpegRenderer(_source))
@@ -135,11 +193,18 @@ namespace Davinci.net
                 for (var x = 0; x < numberOfHorizontalTiles; x++)
 
                 {
-                    var cropEffect = new CropEffect(_source)
+                    try
                     {
-                        CropArea = new Rect(x * tileWidth, y * tileHight, tileWidth, tileHight)
-                    };
-                    listResults.Add(new Tuple<Point, DavinciImage>(new Point(x, y), new DavinciImage(cropEffect)));
+                        var cropEffect = new CropEffect(_source)
+                        {
+                            CropArea = new Rect(x * tileWidth, y * tileHight, tileWidth, tileHight)
+                        };
+                        listResults.Add(new Tuple<Point, DavinciImage>(new Point(x, y), new DavinciImage(cropEffect)));
+                    }
+                    catch (Exception e)
+                    {
+                        throw;
+                    }
 
                 }
             }
@@ -155,7 +220,12 @@ namespace Davinci.net
                     var imageProviderInfo = await GetSize((source as ScaleEffect).Source);
                     return new Size(imageProviderInfo.Width * (source as ScaleEffect).Scale,
                         imageProviderInfo.Height * (source as ScaleEffect).Scale);
-                
+            }
+            if (source is CropEffect)
+            {
+
+                return await GetSize((source as CropEffect).Source);
+               
             }
             else
                 return (await source.GetInfoAsync()).ImageSize;
